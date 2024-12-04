@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Created on Dec 1, 2024
+
+@author: mpechter
+
+"""
+
+import cv2
+import mediapipe as mp
+import rtmidi
+
+
+class VideoTheremin:
+    def __init__(self):
+        # Initialize MIDI output
+        self.midi_out = rtmidi.MidiOut()
+        available_ports = self.midi_out.get_ports()
+
+        if available_ports:
+            self.midi_out.open_port(0)
+        else:
+            self.midi_out.open_virtual_port("Video Theremin")
+
+        # Initialize MediaPipe Pose
+        self.mp_pose = mp.solutions.pose
+        # self.mp_drawing = mp.solutions.drawing_utils
+        self.pose = self.mp_pose.Pose(
+            min_detection_confidence=0.5, min_tracking_confidence=0.5
+        )
+
+        # Initialize webcam
+        self.webcam = cv2.VideoCapture(0)
+        self.webcam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.webcam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+        # MIDI note settings
+        self.current_note = None
+        self.min_note = 48  # C3
+        self.max_note = 60  # C4
+
+        self.top_threshold = 0.2
+        self.bottom_threshold = 0.99
+
+        self.right_threshold = 0.25
+        self.left_threshold = 0.75
+
+        # Scale settings
+        self.scales = {
+            "chromatic": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            "major": [0, 2, 4, 5, 7, 9, 11],
+            "minor": [0, 2, 3, 5, 7, 8, 10],
+            "pentatonic": [0, 2, 4, 7, 9],
+            "blues": [0, 3, 5, 6, 7, 10],
+        }
+        self.current_scale = "major"  # Default scale
+        self.root_note = 0  # C
+
+    def quantize_to_scale(self, note):
+        """Quantize a MIDI note number to the current scale."""
+        # Get the octave and note within octave
+        octave = (note - self.min_note) // 12
+        note_in_octave = (note - self.min_note) % 12
+
+        # Find the closest note in the scale
+        scale_notes = self.scales[self.current_scale]
+        scale_note = min(scale_notes, key=lambda x: abs(x - note_in_octave))
+
+        # Reconstruct the MIDI note number
+        quantized_note = self.min_note + (octave * 12) + scale_note
+
+        # Ensure we stay within our note range
+        return max(self.min_note, min(quantized_note, self.max_note))
+
+    def get_midi_note(self, y_pos):
+        """Convert vertical position to MIDI note."""
+        # Normalize y_pos to 0-1 range within thresholds
+        y_normalized = (y_pos - self.top_threshold) / (
+            self.bottom_threshold - self.top_threshold
+        )
+        y_normalized = max(0, min(1, y_normalized))  # Clamp to 0-1
+
+        # Invert y_pos (higher position = higher pitch)
+        y_normalized = 1 - y_normalized
+
+        # Map to MIDI note range
+        raw_note = int(y_normalized * (self.max_note - self.min_note) + self.min_note)
+
+        # Quantize to current scale
+        return self.quantize_to_scale(raw_note)
+
+    def get_note_name(self, note):
+        """Convert MIDI note number to note name."""
+        note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+        octave = (note // 12) - 1
+        note_name = note_names[note % 12]
+        return f"{note_name}{octave}"
+
+    def play_note(self, note):
+        """Play a MIDI note if it's different from the current note."""
+
+        if self.current_note != note:
+
+            if self.current_note is not None:
+                # Turn off current note
+                self.midi_out.send_message([0x80, self.current_note, 0])
+
+            # Turn on new note
+            self.midi_out.send_message([0x90, note, 100])
+            self.current_note = note
+
+    def run(self):
+        """Main loop for the application."""
+        try:
+            while self.webcam.isOpened():
+                success, image = self.webcam.read()
+                if not success:
+                    print("Failed to get webcam frame")
+                    break
+
+                left_wrist = get_left_wrist_object(image, self)
+                cv2.imshow("Pose MIDI Controller", image)
+
+                if (
+                    left_wrist
+                    and wrist_is_visible(left_wrist.visibility)
+                    and wrist_is_on_keyboard(left_wrist.x)
+                ):
+                    note = self.get_midi_note(left_wrist.y)
+                    self.play_note(note)
+
+                # Handle key presses
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    break
+                elif key == ord("1"):
+                    self.current_scale = "chromatic"
+                elif key == ord("2"):
+                    self.current_scale = "major"
+                elif key == ord("3"):
+                    self.current_scale = "minor"
+                elif key == ord("4"):
+                    self.current_scale = "pentatonic"
+                elif key == ord("5"):
+                    self.current_scale = "blues"
+
+        finally:
+            self.cleanup()
+
+    def cleanup(self):
+        """Clean up resources."""
+        if self.current_note is not None:
+            self.midi_out.send_message([0x80, self.current_note, 0])
+        self.webcam.release()
+        cv2.destroyAllWindows()
+        self.midi_out.close_port()
+
+
+def wrist_is_on_keyboard(x_position: int) -> bool:
+
+    return 0.25 < x_position < 0.75
+
+
+def wrist_is_visible(visibility: int) -> bool:
+
+    return visibility > 0.5
+
+
+def get_left_wrist_object(image, theremin):
+
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = theremin.pose.process(image_rgb)
+
+    if results.pose_landmarks:
+        return results.pose_landmarks.landmark[theremin.mp_pose.PoseLandmark.LEFT_WRIST]
+    else:
+        return False
+
+
+if __name__ == "__main__":
+    controller = VideoTheremin()
+    controller.run()

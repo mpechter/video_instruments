@@ -15,39 +15,24 @@ import rtmidi
 
 class VideoTheremin:
     def __init__(self):
-        # Initialize MIDI output
+        self.initialize_midi()
+        self.initialize_mediapose()
+        self.initialize_webcam()
+        self.set_midi_defaults()
+        self.set_musical_defaults()
+        self.set_detection_thresholds()
+
+    def initialize_midi(self):
         self.midi_out = rtmidi.MidiOut()
         available_ports = self.midi_out.get_ports()
-
         if available_ports:
             self.midi_out.open_port(0)
         else:
             self.midi_out.open_virtual_port("Video Theremin")
 
         # Initialize MediaPipe Pose
-        self.mp_pose = mp.solutions.pose
-        # self.mp_drawing = mp.solutions.drawing_utils
-        self.pose = self.mp_pose.Pose(
-            min_detection_confidence=0.5, min_tracking_confidence=0.5
-        )
 
-        # Initialize webcam
-        self.webcam = cv2.VideoCapture(0)
-        self.webcam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.webcam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-        # MIDI note settings
-        self.current_note = None
-        self.min_note = 48  # C3
-        self.max_note = 60  # C4
-
-        self.top_threshold = 0.2
-        self.bottom_threshold = 0.99
-
-        self.right_threshold = 0.25
-        self.left_threshold = 0.75
-
-        # Scale settings
+    def set_musical_defaults(self):
         self.scales = {
             "chromatic": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
             "major": [0, 2, 4, 5, 7, 9, 11],
@@ -55,8 +40,31 @@ class VideoTheremin:
             "pentatonic": [0, 2, 4, 7, 9],
             "blues": [0, 3, 5, 6, 7, 10],
         }
-        self.current_scale = "major"  # Default scale
+        self.current_scale = "major"
         self.root_note = 0  # C
+
+    def set_detection_thresholds(self):
+        self.top_threshold = 0.25
+        self.bottom_threshold = 0.99
+        self.right_threshold = 0.25
+        self.left_threshold = 0.75
+
+    def set_midi_defaults(self):
+        self.current_note = None
+        self.min_note = 48  # C3
+        self.max_note = 60  # C4
+
+    def initialize_mediapose(self):
+        self.mp_pose = mp.solutions.pose
+        # self.mp_drawing = mp.solutions.drawing_utils
+        self.pose = self.mp_pose.Pose(
+            min_detection_confidence=0.5, min_tracking_confidence=0.5
+        )
+
+    def initialize_webcam(self):
+        self.webcam = cv2.VideoCapture(0)
+        self.webcam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.webcam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     def quantize_to_scale(self, note):
         """Quantize a MIDI note number to the current scale."""
@@ -88,7 +96,6 @@ class VideoTheremin:
         # Map to MIDI note range
         raw_note = int(y_normalized * (self.max_note - self.min_note) + self.min_note)
 
-        # Quantize to current scale
         return self.quantize_to_scale(raw_note)
 
     def get_note_name(self, note):
@@ -114,6 +121,9 @@ class VideoTheremin:
     def run(self):
         """Main loop for the application."""
         try:
+            previous_x = None
+            previous_velocity = None
+            was_visible_last_cycle = False
             while self.webcam.isOpened():
                 success, image = self.webcam.read()
                 if not success:
@@ -121,31 +131,47 @@ class VideoTheremin:
                     break
 
                 left_wrist = get_left_wrist_object(image, self)
-                cv2.imshow("Pose MIDI Controller", image)
+                # cv2.imshow("Pose MIDI Controller", image)
 
                 if (
                     left_wrist
                     and wrist_is_visible(left_wrist.visibility)
                     and wrist_is_on_keyboard(left_wrist.x)
                 ):
+
+                    if previous_x and was_visible_last_cycle:
+                        velocity = round(350 * (previous_x - left_wrist.x))
+                    else:
+                        velocity = 0
+
+                    if previous_velocity is not None:
+                        if previous_velocity >= 0 and velocity < 0:
+                            print(previous_velocity, velocity)
+                            print("release")
+
                     note = self.get_midi_note(left_wrist.y)
                     self.play_note(note)
 
-                # Handle key presses
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord("q"):
-                    break
-                elif key == ord("1"):
-                    self.current_scale = "chromatic"
-                elif key == ord("2"):
-                    self.current_scale = "major"
-                elif key == ord("3"):
-                    self.current_scale = "minor"
-                elif key == ord("4"):
-                    self.current_scale = "pentatonic"
-                elif key == ord("5"):
-                    self.current_scale = "blues"
+                    previous_x = left_wrist.x
+                    previous_velocity = velocity
 
+                    was_visible_last_cycle = True
+                # # Handle key presses
+                # key = cv2.waitKey(1) & 0xFF
+                # if key == ord("q"):
+                #     break
+                # elif key == ord("1"):
+                #     self.current_scale = "chromatic"
+                # elif key == ord("2"):
+                #     self.current_scale = "major"
+                # elif key == ord("3"):
+                #     self.current_scale = "minor"
+                # elif key == ord("4"):
+                #     self.current_scale = "pentatonic"
+                # elif key == ord("5"):
+                #     self.current_scale = "blues"
+                else:
+                    was_visible_last_cycle = False
         finally:
             self.cleanup()
 

@@ -21,6 +21,7 @@ class VideoTheremin:
         self.set_midi_defaults()
         self.set_musical_defaults()
         self.set_detection_thresholds()
+        self.is_on = False
 
     def initialize_midi(self):
         self.midi_out = rtmidi.MidiOut()
@@ -108,22 +109,38 @@ class VideoTheremin:
     def play_note(self, note):
         """Play a MIDI note if it's different from the current note."""
 
-        if self.current_note != note:
-
-            if self.current_note is not None:
-                # Turn off current note
-                self.midi_out.send_message([0x80, self.current_note, 0])
-
-            # Turn on new note
+        # if self.current_note != note and self.velocity >= 0:
+        #     self.stop_note()
+        #     self.midi_out.send_message([0x90, note, 100])
+        #     self.current_note = note
+        if self.is_on == False and self.velocity > 0:
+            # self.stop_note()
             self.midi_out.send_message([0x90, note, 100])
             self.current_note = note
+            self.is_on = True
+
+    def stop_note(self):
+
+        if self.current_note is not None:
+            # Turn off current note
+            self.midi_out.send_message([0x80, self.current_note, 0])
+            self.is_on = False
+
+    def get_velocity(self, left_wrist):
+
+        if self.previous_x and self.was_visible_last_cycle:
+            self.velocity = round(500 * (self.previous_x - left_wrist.x))
+        else:
+            self.velocity = 0
+
+        print(self.velocity)
 
     def run(self):
         """Main loop for the application."""
         try:
-            previous_x = None
-            previous_velocity = None
-            was_visible_last_cycle = False
+            self.previous_x = None
+            self.previous_velocity = None
+            self.was_visible_last_cycle = False
             while self.webcam.isOpened():
                 success, image = self.webcam.read()
                 if not success:
@@ -139,39 +156,17 @@ class VideoTheremin:
                     and wrist_is_on_keyboard(left_wrist.x)
                 ):
 
-                    if previous_x and was_visible_last_cycle:
-                        velocity = round(350 * (previous_x - left_wrist.x))
-                    else:
-                        velocity = 0
-
-                    if previous_velocity is not None:
-                        if previous_velocity >= 0 and velocity < 0:
-                            print(previous_velocity, velocity)
-                            print("release")
-
+                    self.get_velocity(left_wrist)
                     note = self.get_midi_note(left_wrist.y)
                     self.play_note(note)
 
-                    previous_x = left_wrist.x
-                    previous_velocity = velocity
+                    self.previous_x = left_wrist.x
+                    self.previous_velocity = self.velocity
+                    self.was_visible_last_cycle = True
 
-                    was_visible_last_cycle = True
-                # # Handle key presses
-                # key = cv2.waitKey(1) & 0xFF
-                # if key == ord("q"):
-                #     break
-                # elif key == ord("1"):
-                #     self.current_scale = "chromatic"
-                # elif key == ord("2"):
-                #     self.current_scale = "major"
-                # elif key == ord("3"):
-                #     self.current_scale = "minor"
-                # elif key == ord("4"):
-                #     self.current_scale = "pentatonic"
-                # elif key == ord("5"):
-                #     self.current_scale = "blues"
                 else:
-                    was_visible_last_cycle = False
+                    self.stop_note()
+                    self.was_visible_last_cycle = False
         finally:
             self.cleanup()
 

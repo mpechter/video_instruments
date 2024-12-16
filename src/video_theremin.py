@@ -109,15 +109,24 @@ class VideoTheremin:
     def play_note(self, note):
         """Play a MIDI note if it's different from the current note."""
 
+        if (self.current_note != note or self.is_on == False) and self.velocity > 0:
+            self.stop_note()
+            normalized_velocity = normalize_velocity(self.velocity)
+            self.midi_out.send_message([0x90, note, normalized_velocity])
+            self.current_note = note
+            self.is_on = True
+
         # if self.current_note != note and self.velocity >= 0:
         #     self.stop_note()
         #     self.midi_out.send_message([0x90, note, 100])
         #     self.current_note = note
-        if self.is_on == False and self.velocity > 0:
-            # self.stop_note()
-            self.midi_out.send_message([0x90, note, 100])
-            self.current_note = note
-            self.is_on = True
+        # elif self.is_on == False and self.velocity > 0:
+        #     self.stop_note()
+        #     self.midi_out.send_message([0x90, note, self.velocity + 50])
+        #     self.current_note = note
+        #     self.is_on = True
+        # else:
+        #     self.stop_note()
 
     def stop_note(self):
 
@@ -181,7 +190,7 @@ class VideoTheremin:
 
 def wrist_is_on_keyboard(x_position: int) -> bool:
 
-    return 0.25 < x_position < 0.75
+    return 0.50 < x_position < 0.75
 
 
 def wrist_is_visible(visibility: int) -> bool:
@@ -198,6 +207,24 @@ def get_left_wrist_object(image, theremin):
         return results.pose_landmarks.landmark[theremin.mp_pose.PoseLandmark.LEFT_WRIST]
     else:
         return False
+
+
+def normalize_velocity(raw_velocity: int):
+
+    if raw_velocity < 0:
+        return 0
+
+    if raw_velocity > 200:
+        return 120
+
+    if raw_velocity < 50:
+        return raw_velocity + 30
+
+    if raw_velocity > 100:
+        return raw_velocity - 10
+
+    else:
+        return 0
 
 
 if __name__ == "__main__":

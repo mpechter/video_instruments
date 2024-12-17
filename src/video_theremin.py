@@ -111,8 +111,7 @@ class VideoTheremin:
 
         if (self.current_note != note or self.is_on == False) and self.velocity > 0:
             self.stop_note()
-            normalized_velocity = normalize_velocity(self.velocity)
-            self.midi_out.send_message([0x90, note, normalized_velocity])
+            self.midi_out.send_message([0x90, note, self.midi_velocity])
             self.current_note = note
             self.is_on = True
 
@@ -137,12 +136,11 @@ class VideoTheremin:
 
     def get_velocity(self, left_wrist):
 
-        if self.previous_x and self.was_visible_last_cycle:
-            self.velocity = round(500 * (self.previous_x - left_wrist.x))
+        if self.previous_x:
+            self.velocity = self.previous_x - left_wrist.x
+            self.midi_velocity = get_midi_velocity(self.velocity)
         else:
             self.velocity = 0
-
-        print(self.velocity)
 
     def run(self):
         """Main loop for the application."""
@@ -166,8 +164,11 @@ class VideoTheremin:
                 ):
 
                     self.get_velocity(left_wrist)
-                    note = self.get_midi_note(left_wrist.y)
-                    self.play_note(note)
+                    if self.velocity > 0:
+                        note = self.get_midi_note(left_wrist.y)
+                        self.play_note(note)
+                    else:
+                        self.stop_note()
 
                     self.previous_x = left_wrist.x
                     self.previous_velocity = self.velocity
@@ -209,22 +210,41 @@ def get_left_wrist_object(image, theremin):
         return False
 
 
-def normalize_velocity(raw_velocity: int):
+def get_midi_velocity(
+    raw_velocity: float,
+):
+    """
+    Compresses velocity to boost lows and soften highs using a power curve.
+
+    Args:
+        input_velocity (float): The raw velocity input (e.g., wrist movement speed).
+
+    Returns:
+        int: MIDI velocity (0-127) after applying compression.
+    """
+
+    power = 0.8
+    min_velocity = 70
+    max_velocity = 100
 
     if raw_velocity < 0:
-        return 0
+        return raw_velocity
 
-    if raw_velocity > 200:
-        return 120
+    input_velocity = raw_velocity * 5000
 
-    if raw_velocity < 50:
-        return raw_velocity + 30
+    if input_velocity <= min_velocity:
+        return min_velocity
 
-    if raw_velocity > 100:
-        return raw_velocity - 10
+    normalized_velocity = (input_velocity - min_velocity) / (
+        max_velocity - min_velocity
+    )
+    velocity_as_percent = normalized_velocity**power
 
-    else:
-        return 0
+    velocity_as_portion_of_max = int(velocity_as_percent * max_velocity)
+
+    clipped_to_range = max(min_velocity, min(max_velocity, velocity_as_portion_of_max))
+
+    return clipped_to_range
 
 
 if __name__ == "__main__":

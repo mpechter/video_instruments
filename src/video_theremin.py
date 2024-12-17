@@ -21,7 +21,11 @@ class VideoTheremin:
         self.set_midi_defaults()
         self.set_musical_defaults()
         self.set_detection_thresholds()
-        self.is_on = False
+        self.velocity = 0
+        self.release_threshold = 0.05  # Soft threshold for note release
+        self.note_state = "idle"  # Track note state explicitly
+        self.release_counter = 0
+        self.max_release_count = 10  #
 
     def initialize_midi(self):
         self.midi_out = rtmidi.MidiOut()
@@ -109,38 +113,31 @@ class VideoTheremin:
     def play_note(self, note):
         """Play a MIDI note if it's different from the current note."""
 
-        if (self.current_note != note or self.is_on == False) and self.velocity > 0:
+        if self.current_note != note:
             self.stop_note()
             self.midi_out.send_message([0x90, note, self.midi_velocity])
             self.current_note = note
-            self.is_on = True
-
-        # if self.current_note != note and self.velocity >= 0:
-        #     self.stop_note()
-        #     self.midi_out.send_message([0x90, note, 100])
-        #     self.current_note = note
-        # elif self.is_on == False and self.velocity > 0:
-        #     self.stop_note()
-        #     self.midi_out.send_message([0x90, note, self.velocity + 50])
-        #     self.current_note = note
-        #     self.is_on = True
-        # else:
-        #     self.stop_note()
+        if self.note_state == "idle":
+            self.stop_note()
+            self.midi_out.send_message([0x90, note, self.midi_velocity])
+            self.current_note = note
 
     def stop_note(self):
 
         if self.current_note is not None:
-            # Turn off current note
             self.midi_out.send_message([0x80, self.current_note, 0])
-            self.is_on = False
 
     def get_velocity(self, left_wrist):
 
-        if self.previous_x:
+        if self.previous_x is not None:
             self.velocity = self.previous_x - left_wrist.x
-            self.midi_velocity = get_midi_velocity(self.velocity)
         else:
             self.velocity = 0
+
+        if abs(self.velocity) < 0.01:
+            self.velocity = 0
+
+        self.midi_velocity = get_midi_velocity(self.velocity)
 
     def run(self):
         """Main loop for the application."""
@@ -162,21 +159,38 @@ class VideoTheremin:
                     and wrist_is_visible(left_wrist.visibility)
                     and wrist_is_on_keyboard(left_wrist.x)
                 ):
-
                     self.get_velocity(left_wrist)
+                    print(self.velocity)
+
                     if self.velocity > 0:
                         note = self.get_midi_note(left_wrist.y)
                         self.play_note(note)
-                    else:
-                        self.stop_note()
+                        self.note_state = "playing"
+                        self.release_counter = 0
+                    elif self.velocity < 0:
+                        self.release_counter += 1
 
-                    self.previous_x = left_wrist.x
-                    self.previous_velocity = self.velocity
-                    self.was_visible_last_cycle = True
+                    if self.note_state == "playing":
+                        if self.release_counter > 3:
+                            self.stop_note()
+                            print("pt 1")
+                            self.note_state = "idle"
+
+                        if self.release_counter > self.max_release_count:
+                            self.stop_note()
+                            print("pt 2")
+                            self.note_state = "idle"
 
                 else:
-                    self.stop_note()
-                    self.was_visible_last_cycle = False
+                    if self.note_state == "playing":
+                        self.release_counter += 1
+
+                        if self.release_counter > self.max_release_count:
+                            self.stop_note()
+                            print("pt 3")
+                            self.note_state = "idle"
+
+                self.previous_x = left_wrist.x if left_wrist else self.previous_x
         finally:
             self.cleanup()
 
@@ -224,7 +238,7 @@ def get_midi_velocity(
     """
 
     power = 0.8
-    min_velocity = 70
+    min_velocity = 60
     max_velocity = 100
 
     if raw_velocity < 0:

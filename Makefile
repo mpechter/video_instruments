@@ -33,7 +33,5 @@ run_tests:
 	python3 -m pytest test \
 	--verbose
 
-
-
 clean:
 	@rm -rf ./.venv

@@ -10,7 +10,7 @@ Created on Dec 18, 2024
 from single_keyboard import wrist_is_visible, wrist_is_on_keyboard, get_midi_velocity
 
 
-class TestThereminUtils:
+class TestSingleKeyboard:
 
     def test_if_wrist_visible(self):
         assert wrist_is_visible(0.60) == True

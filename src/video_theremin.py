@@ -111,7 +111,6 @@ class VideoTheremin:
         return f"{note_name}{octave}"
 
     def play_note(self, note):
-        """Play a MIDI note if it's different from the current note."""
 
         if self.current_note != note:
             self.stop_note()

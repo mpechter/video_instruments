@@ -12,6 +12,10 @@ import cv2
 import mediapipe as mp
 import rtmidi
 
+MAX_RELEASE = 2  # No. of cycles of negative velocity will result in a note-release.
+VELOCITY_BUFFER = 0.01  # Any velocity below this is ignored to reduce shakiness.
+NOTE_HYSTERESIS = 1  # To prevent note flickering.
+
 
 class VideoTheremin:
     def __init__(self):
@@ -22,10 +26,8 @@ class VideoTheremin:
         self.set_musical_defaults()
         self.set_detection_thresholds()
         self.velocity = 0
-        self.release_threshold = 0.05  # Soft threshold for note release
-        self.note_state = "idle"  # Track note state explicitly
+        self.is_playing = False
         self.release_counter = 0
-        self.max_release_count = 10  #
 
     def initialize_midi(self):
         self.midi_out = rtmidi.MidiOut()
@@ -34,8 +36,6 @@ class VideoTheremin:
             self.midi_out.open_port(0)
         else:
             self.midi_out.open_virtual_port("Video Theremin")
-
-        # Initialize MediaPipe Pose
 
     def set_musical_defaults(self):
         self.scales = {
@@ -101,6 +101,11 @@ class VideoTheremin:
         # Map to MIDI note range
         raw_note = int(y_normalized * (self.max_note - self.min_note) + self.min_note)
 
+        if self.current_note is not None:
+            note_diff = abs(raw_note - self.current_note)
+            if note_diff < NOTE_HYSTERESIS:  # Small buffer zone
+                return self.current_note
+
         return self.quantize_to_scale(raw_note)
 
     def get_note_name(self, note):
@@ -112,19 +117,18 @@ class VideoTheremin:
 
     def play_note(self, note):
 
-        if self.current_note != note:
+        if self.current_note != note or self.is_playing == False:
             self.stop_note()
             self.midi_out.send_message([0x90, note, self.midi_velocity])
             self.current_note = note
-        if self.note_state == "idle":
-            self.stop_note()
-            self.midi_out.send_message([0x90, note, self.midi_velocity])
-            self.current_note = note
+            self.is_playing = True
 
     def stop_note(self):
 
         if self.current_note is not None:
             self.midi_out.send_message([0x80, self.current_note, 0])
+
+        self.is_playing = False
 
     def get_velocity(self, left_wrist):
 
@@ -133,7 +137,7 @@ class VideoTheremin:
         else:
             self.velocity = 0
 
-        if abs(self.velocity) < 0.01:
+        if abs(self.velocity) < VELOCITY_BUFFER:
             self.velocity = 0
 
         self.midi_velocity = get_midi_velocity(self.velocity)
@@ -152,42 +156,29 @@ class VideoTheremin:
 
                 left_wrist = get_left_wrist_object(image, self)
                 # cv2.imshow("Pose MIDI Controller", image)
-
                 if (
                     left_wrist
                     and wrist_is_visible(left_wrist.visibility)
                     and wrist_is_on_keyboard(left_wrist.x)
                 ):
                     self.get_velocity(left_wrist)
-                    print(self.velocity)
 
-                    if self.velocity > 0:
+                    if self.velocity >= 0:
                         note = self.get_midi_note(left_wrist.y)
                         self.play_note(note)
-                        self.note_state = "playing"
                         self.release_counter = 0
                     elif self.velocity < 0:
                         self.release_counter += 1
 
-                    if self.note_state == "playing":
-                        if self.release_counter > 3:
+                    if self.is_playing == True:
+                        if self.release_counter > MAX_RELEASE:
                             self.stop_note()
-                            print("pt 1")
-                            self.note_state = "idle"
-
-                        if self.release_counter > self.max_release_count:
-                            self.stop_note()
-                            print("pt 2")
-                            self.note_state = "idle"
 
                 else:
-                    if self.note_state == "playing":
+                    if self.is_playing == True:
                         self.release_counter += 1
-
-                        if self.release_counter > self.max_release_count:
+                        if self.release_counter > MAX_RELEASE:
                             self.stop_note()
-                            print("pt 3")
-                            self.note_state = "idle"
 
                 self.previous_x = left_wrist.x if left_wrist else self.previous_x
         finally:
@@ -204,12 +195,12 @@ class VideoTheremin:
 
 def wrist_is_on_keyboard(x_position: int) -> bool:
 
-    return 0.50 < x_position < 0.75
+    return x_position < 0.50
 
 
 def wrist_is_visible(visibility: int) -> bool:
 
-    return visibility > 0.5
+    return visibility > 0.58
 
 
 def get_left_wrist_object(image, theremin):
@@ -238,7 +229,7 @@ def get_midi_velocity(
 
     power = 0.8
     min_velocity = 60
-    max_velocity = 100
+    max_velocity = 90
 
     if raw_velocity < 0:
         return raw_velocity

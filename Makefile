@@ -27,6 +27,13 @@ single:
 	export PYTHONPATH="$(REPO_PATH)" && \
 	$(PYTHON) src/single_keyboard.py
 
+drum:
+	@printf "\n" && \
+	source ./.venv/bin/activate && \
+	export PYTHONPATH="$(REPO_PATH)" && \
+	$(PYTHON) src/drum.py
+
+
 run_tests:
 	@source ./.venv/bin/activate && \
 	export PYTHONPATH="$(REPO_PATH)" && \

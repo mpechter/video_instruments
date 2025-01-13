@@ -16,6 +16,8 @@ MAX_RELEASE = 2  # No. of cycles of negative velocity will result in a note-rele
 VELOCITY_BUFFER = 0.01  # Any velocity below this is ignored to reduce shakiness.
 NOTE_HYSTERESIS = 1  # To prevent note flickering.
 
+STRIKE_THRESHOLD = 3  # How many cycles of positive velocity before a note is played.
+
 
 class Drum:
     def __init__(self):
@@ -27,6 +29,7 @@ class Drum:
         self.is_playing = False
         self.release_counter = 0
         self.current_note = None
+        self.strike_counter = 0
 
     def initialize_midi(self):
         self.midi_out = rtmidi.MidiOut()
@@ -88,11 +91,11 @@ class Drum:
 
     def play_note(self, note):
 
-        if self.current_note != note or self.is_playing == False:
-            self.stop_note()
-            self.midi_out.send_message([0x90, note, 100])
-            self.current_note = note
-            self.is_playing = True
+        self.stop_note()
+        self.midi_out.send_message([0x90, note, 100])
+        self.current_note = note
+        self.is_playing = True
+        self.stop_note()
 
     def stop_note(self):
 
@@ -125,29 +128,28 @@ class Drum:
 
                 left_wrist = get_left_wrist_object(image, self)
                 # cv2.imshow("Pose MIDI Controller", image)
-                if (
-                    left_wrist
-                    and wrist_is_visible(left_wrist.visibility)
-                    and wrist_is_on_trigger_level(left_wrist.y)
-                ):
+                if left_wrist and wrist_is_visible(left_wrist.visibility):
                     self.get_velocity(left_wrist)
 
                     if self.velocity > 0:
+                        self.strike_counter += 1
+
+                    if (
+                        self.strike_counter > STRIKE_THRESHOLD
+                        and wrist_is_on_trigger_level(left_wrist.y)
+                    ):
                         note = self.get_midi_note(left_wrist.x)
                         self.play_note(note)
-                        self.release_counter = 0
-                    elif self.velocity < 0:
-                        self.release_counter += 1
+                        self.strike_counter = 0
 
-                    if self.is_playing == True:
-                        if self.release_counter > MAX_RELEASE:
-                            self.stop_note()
+                # The issue I'm seeing is that we need a way to differentiate between strikes.
+                # There has to be a way to say that a strike has ended and a new one has begun.
 
-                else:
-                    if self.is_playing == True:
-                        self.release_counter += 1
-                        if self.release_counter > MAX_RELEASE:
-                            self.stop_note()
+                # else:
+                #     if self.is_playing == True:
+                #         self.release_counter += 1
+                #         if self.release_counter > MAX_RELEASE:
+                #             self.stop_note()
 
                 self.previous_y = left_wrist.y if left_wrist else self.previous_y
         finally:
@@ -164,7 +166,7 @@ class Drum:
 
 def wrist_is_on_trigger_level(y_position: int) -> bool:
 
-    return y_position > 0.90
+    return 0.90 < y_position
 
 
 def wrist_is_visible(visibility: int) -> bool:

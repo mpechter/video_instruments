@@ -12,11 +12,10 @@ import cv2
 import mediapipe as mp
 import rtmidi
 
-MAX_RELEASE = 2  # No. of cycles of negative velocity will result in a note-release.
 VELOCITY_BUFFER = 0.01  # Any velocity below this is ignored to reduce shakiness.
 NOTE_HYSTERESIS = 1  # To prevent note flickering.
-
-STRIKE_THRESHOLD = 3  # How many cycles of positive velocity before a note is played.
+STRIKE_THRESHOLD = 2  # How many cycles of positive velocity before a note is played.
+READY_TO_STRIKE_THRESHOLD = 2
 
 
 class Drum:
@@ -26,10 +25,9 @@ class Drum:
         self.initialize_webcam()
         self.set_detection_thresholds()
         self.velocity = 0
-        self.is_playing = False
-        self.release_counter = 0
-        self.current_note = None
-        self.strike_counter = 0
+        self.left_release_counter = 0
+        self.left_current_note = None
+        self.left_strike_counter = 0
 
     def initialize_midi(self):
         self.midi_out = rtmidi.MidiOut()
@@ -67,18 +65,20 @@ class Drum:
 
         return inverted
 
-    def change_is_less_than_hysteresis(self, normalized_note: int) -> bool:
+    def change_is_less_than_hysteresis(
+        self, normalized_note: int, current_note
+    ) -> bool:
 
-        note_diff = abs(normalized_note - self.current_note)
+        note_diff = abs(normalized_note - current_note)
         return note_diff < NOTE_HYSTERESIS
 
-    def get_midi_note(self, x_pos: int) -> int:
+    def get_midi_note(self, x_pos: int, current_note: int) -> int:
         """Convert vertical position to MIDI note."""
         normalized_note = self.normalize_note(x_pos)
 
-        if self.current_note is not None:
-            if self.change_is_less_than_hysteresis(normalized_note):
-                return self.current_note
+        if current_note is not None:
+            if self.change_is_less_than_hysteresis(normalized_note, current_note):
+                return current_note
 
         if normalized_note < 0.25:
             return 36
@@ -93,16 +93,12 @@ class Drum:
 
         self.stop_note()
         self.midi_out.send_message([0x90, note, 100])
-        self.current_note = note
-        self.is_playing = True
-        self.stop_note()
+        self.stop_note()  # Since it is a drum, we quickly stop the note.
 
     def stop_note(self):
 
         if self.current_note is not None:
             self.midi_out.send_message([0x80, self.current_note, 0])
-
-        self.is_playing = False
 
     def get_velocity(self, left_wrist):
 
@@ -132,24 +128,20 @@ class Drum:
                     self.get_velocity(left_wrist)
 
                     if self.velocity > 0:
-                        self.strike_counter += 1
+                        self.left_strike_counter += 1
+                    else:
+                        self.left_release_counter += 1
 
                     if (
-                        self.strike_counter > STRIKE_THRESHOLD
+                        self.left_strike_counter > STRIKE_THRESHOLD
                         and wrist_is_on_trigger_level(left_wrist.y)
+                        and self.left_release_counter > READY_TO_STRIKE_THRESHOLD
                     ):
-                        note = self.get_midi_note(left_wrist.x)
+                        note = self.get_midi_note(left_wrist.x, self.left_current_note)
                         self.play_note(note)
-                        self.strike_counter = 0
-
-                # The issue I'm seeing is that we need a way to differentiate between strikes.
-                # There has to be a way to say that a strike has ended and a new one has begun.
-
-                # else:
-                #     if self.is_playing == True:
-                #         self.release_counter += 1
-                #         if self.release_counter > MAX_RELEASE:
-                #             self.stop_note()
+                        self.left_current_note = note
+                        self.left_strike_counter = 0
+                        self.left_release_counter = 0
 
                 self.previous_y = left_wrist.y if left_wrist else self.previous_y
         finally:

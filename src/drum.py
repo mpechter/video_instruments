@@ -77,7 +77,7 @@ class Drum:
             return 42
         elif mirrored_x > 20:
             return 38
-        elif mirrored_x > 0:
+        else:
             return 36
 
     def play_note(self, note, wrist_tracker):
@@ -91,14 +91,12 @@ class Drum:
 
     def process_wrist(self, wrist, wrist_tracker):
         if wrist and wrist_is_visible(wrist.visibility):
-            print(wrist.y)
-            if wrist_tracker.set and wrist.y > STRIKE_LEVEL:
+            if wrist_tracker.set and wrist.y >= STRIKE_LEVEL:
                 note = self.get_midi_note(wrist.x, wrist_tracker.current_note)
-
                 self.play_note(note, wrist_tracker)
                 wrist_tracker.current_note = note
                 wrist_tracker.reset_counters()
-            elif wrist.y <= STRIKE_LEVEL:
+            elif wrist.y < STRIKE_LEVEL:
                 wrist_tracker.set = True
 
     def run(self):

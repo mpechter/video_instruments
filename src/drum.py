@@ -9,47 +9,17 @@ VELOCITY_BUFFER = 0.01
 NOTE_HYSTERESIS = 1
 STRIKE_THRESHOLD = 5
 READY_TO_STRIKE_THRESHOLD = 1
+STRIKE_LEVEL = 0.85
 
 
 class WristTracker:
     def __init__(self, side: str):
         self.side = side
-        self.velocity = 0
-        self.release_counter = 0
         self.current_note = None
-        self.strike_counter = 0
-        self.previous_y = None
-        self.previous_velocity = None
-
-    def get_velocity(self, wrist):
-        if self.previous_y is not None:
-            self.velocity = wrist.y - self.previous_y
-        else:
-            self.velocity = 0
-
-        if abs(self.velocity) < VELOCITY_BUFFER:
-            self.velocity = 0
-
-        print(self.velocity)
-
-    def update_position(self, wrist):
-        self.previous_y = wrist.y if wrist else self.previous_y
-
-    def should_play_note(self, wrist) -> bool:
-        if self.velocity > 0:
-            self.strike_counter += 1
-        elif self.velocity <= 0:
-            self.release_counter += 1
-
-        return (
-            self.strike_counter > STRIKE_THRESHOLD
-            and wrist_is_on_trigger_level(wrist.y)
-            and self.release_counter >= READY_TO_STRIKE_THRESHOLD
-        )
+        self.set = False
 
     def reset_counters(self):
-        self.strike_counter = 0
-        self.release_counter = 0
+        self.set = False
 
 
 class Drum:
@@ -86,14 +56,6 @@ class Drum:
         self.webcam.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.webcam.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    # def normalize_note(self, x_pos: int) -> int:
-    #     normalized_within_thresholds = (x_pos - self.right_threshold) / (
-    #         self.left_threshold - self.right_threshold
-    #     )
-    #     clamped_to_0_1 = max(0, min(1, normalized_within_thresholds))
-
-    #     return 1 - clamped_to_0_1
-
     def change_is_less_than_hysteresis(
         self, normalized_note: int, current_note
     ) -> bool:
@@ -107,16 +69,16 @@ class Drum:
             if abs(x_pos - current_note) < NOTE_HYSTERESIS:
                 return current_note
 
-        mirrored_x = 1 - x_pos
+        mirrored_x = 100 * (1 - x_pos)
 
-        if mirrored_x < 0.25:
-            return 36
-        elif mirrored_x < 0.5:
-            return 38
-        elif mirrored_x < 0.75:
+        if mirrored_x > 80:
+            return 51
+        elif mirrored_x > 50:
             return 42
-        else:
-            return 48
+        elif mirrored_x > 20:
+            return 38
+        elif mirrored_x > 0:
+            return 36
 
     def play_note(self, note, wrist_tracker):
         self.stop_note(wrist_tracker)
@@ -129,16 +91,15 @@ class Drum:
 
     def process_wrist(self, wrist, wrist_tracker):
         if wrist and wrist_is_visible(wrist.visibility):
-            wrist_tracker.get_velocity(wrist)
-
-            if wrist_tracker.should_play_note(wrist):
+            print(wrist.y)
+            if wrist_tracker.set and wrist.y > STRIKE_LEVEL:
                 note = self.get_midi_note(wrist.x, wrist_tracker.current_note)
+
                 self.play_note(note, wrist_tracker)
-                print(wrist_tracker.side)
                 wrist_tracker.current_note = note
                 wrist_tracker.reset_counters()
-
-            wrist_tracker.update_position(wrist)
+            elif wrist.y <= STRIKE_LEVEL:
+                wrist_tracker.set = True
 
     def run(self):
         try:
@@ -166,7 +127,7 @@ class Drum:
 
 
 def wrist_is_on_trigger_level(y_position: int) -> bool:
-    return 0.50 < y_position
+    return y_position > 0.4
 
 
 def wrist_is_visible(visibility: int) -> bool:
